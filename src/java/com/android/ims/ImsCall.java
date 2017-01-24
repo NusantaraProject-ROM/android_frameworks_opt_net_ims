@@ -1750,6 +1750,7 @@ public class ImsCall implements ICall {
         if (mediaProfile.mVideoQuality != ImsStreamMediaProfile.VIDEO_QUALITY_NONE) {
             mediaProfile.mVideoDirection = ImsStreamMediaProfile.DIRECTION_SEND;
         }
+        mediaProfile.mRttMode = mCallProfile.mMediaProfile.mRttMode;
 
         return mediaProfile;
     }
@@ -1768,6 +1769,7 @@ public class ImsCall implements ICall {
         if (mediaProfile.mVideoQuality != ImsStreamMediaProfile.VIDEO_QUALITY_NONE) {
             mediaProfile.mVideoDirection = ImsStreamMediaProfile.DIRECTION_SEND_RECEIVE;
         }
+        mediaProfile.mRttMode = mCallProfile.mMediaProfile.mRttMode;
 
         return mediaProfile;
     }
@@ -2273,6 +2275,25 @@ public class ImsCall implements ICall {
         }
 
         return;
+    }
+
+    /**
+     * Sends RTT Upgrade request
+     *
+     * @param to   : expected profile
+     * @throws CallStateException
+     */
+    public void sendRttModifyRequest(ImsCallProfile to) throws ImsException {
+        logi("RTT: sendRttModifyRequest");
+
+        synchronized(mLockObj) {
+            if (mSession == null) {
+                loge("RTT: sendRttModifyRequest :: no call session");
+                throw new ImsException("No call session",
+                        ImsReasonInfo.CODE_LOCAL_CALL_TERMINATED);
+            }
+            mSession.sendRttModifyRequest(to);
+        }
     }
 
     @VisibleForTesting
