@@ -25,25 +25,27 @@ import android.os.Message;
 import android.os.Parcel;
 import android.os.PersistableBundle;
 import android.os.RemoteException;
-import android.os.ServiceManager;
 import android.os.SystemProperties;
 import android.provider.Settings;
 import android.telecom.TelecomManager;
 import android.telephony.CarrierConfigManager;
+import android.telephony.ims.internal.feature.ImsFeature;
+import android.telephony.ims.stub.ImsRegistrationImplBase;
 import android.telephony.Rlog;
 import android.telephony.ServiceState;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
-import android.telephony.ims.feature.ImsFeature;
 import android.util.Log;
 
 import com.android.ims.internal.IImsCallSession;
 import com.android.ims.internal.IImsConfig;
 import com.android.ims.internal.IImsEcbm;
-import com.android.ims.internal.IImsMMTelFeature;
 import com.android.ims.internal.IImsMultiEndpoint;
+import com.android.ims.internal.IImsRegistration;
+import com.android.ims.internal.IImsRegistrationCallback;
 import com.android.ims.internal.IImsRegistrationListener;
 import com.android.ims.internal.IImsServiceController;
+import com.android.ims.internal.IImsSmsListener;
 import com.android.ims.internal.IImsUt;
 import com.android.ims.internal.ImsCallSession;
 import com.android.internal.annotations.VisibleForTesting;
@@ -55,6 +57,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.CopyOnWriteArraySet;
 
 /**
  * Provides APIs for IMS services, such as initiating IMS calls, and provides access to
@@ -77,13 +80,6 @@ public class ImsManager {
     public static final int PROPERTY_DBG_WFC_AVAIL_OVERRIDE_DEFAULT = 0;
     public static final String PROPERTY_DBG_ALLOW_IMS_OFF_OVERRIDE = "persist.dbg.allow_ims_off";
     public static final int PROPERTY_DBG_ALLOW_IMS_OFF_OVERRIDE_DEFAULT = 0;
-
-    /**
-     * For accessing the IMS related service.
-     * Internal use only.
-     * @hide
-     */
-    private static final String IMS_SERVICE = "ims";
 
     /**
      * The result code to be sent back with the incoming call {@link PendingIntent}.
@@ -198,14 +194,20 @@ public class ImsManager {
 
     private ImsMultiEndpoint mMultiEndpoint = null;
 
-    private Set<ImsServiceProxy.INotifyStatusChanged> mStatusCallbacks = new HashSet<>();
+    private Set<ImsServiceProxy.IFeatureUpdate> mStatusCallbacks = new CopyOnWriteArraySet<>();
 
     // Keep track of the ImsRegistrationListenerProxys that have been created so that we can
     // remove them from the ImsService.
     private final Set<ImsConnectionStateListener> mRegistrationListeners = new HashSet<>();
 
-    private final ImsRegistrationListenerProxy mRegistrationListenerProxy =
+
+    // Used for compatibility with the old Registration method
+    // TODO: Remove once the compat layer is in place
+    private final ImsRegistrationListenerProxy mImsRegistrationListenerProxy =
             new ImsRegistrationListenerProxy();
+    // New API for registration to the ImsService.
+    private final ImsRegistrationCallback mRegistrationCallback = new ImsRegistrationCallback();
+
 
     // When true, we have registered the mRegistrationListenerProxy with the ImsService. Don't do
     // it again.
@@ -1314,7 +1316,7 @@ public class ImsManager {
      * Adds a callback for status changed events if the binder is already available. If it is not,
      * this method will throw an ImsException.
      */
-    public void addNotifyStatusChangedCallbackIfAvailable(ImsServiceProxy.INotifyStatusChanged c)
+    public void addNotifyStatusChangedCallbackIfAvailable(ImsServiceProxy.IFeatureUpdate c)
             throws ImsException {
         if (!mImsServiceProxy.isBinderAlive()) {
             throw new ImsException("Binder is not active!",
@@ -1322,6 +1324,14 @@ public class ImsManager {
         }
         if (c != null) {
             mStatusCallbacks.add(c);
+        }
+    }
+
+    public void removeNotifyStatusChangedCallback(ImsServiceProxy.IFeatureUpdate c) {
+        if (c != null) {
+            mStatusCallbacks.remove(c);
+        } else {
+            Log.w(TAG, "removeNotifyStatusChangedCallback: callback is null!");
         }
     }
 
@@ -1409,9 +1419,7 @@ public class ImsManager {
      * @throws NullPointerException if {@code listener} is null
      * @throws ImsException if calling the IMS service results in an error
      */
-    public void addRegistrationListener(ImsConnectionStateListener listener)
-            throws ImsException {
-
+    public void addRegistrationListener(ImsConnectionStateListener listener) throws ImsException {
         if (listener == null) {
             throw new NullPointerException("listener can't be null");
         }
@@ -1420,8 +1428,13 @@ public class ImsManager {
             if (!mHasRegisteredForProxy) {
                 try {
                     checkAndThrowExceptionIfServiceUnavailable();
-                    mImsServiceProxy.addRegistrationListener(mRegistrationListenerProxy);
-                    log("RegistrationListenerProxy registered.");
+                    // TODO: Remove once new MmTelFeature is merged in
+                    mImsServiceProxy.addRegistrationListener(mImsRegistrationListenerProxy);
+                    IImsRegistration regBinder = mImsServiceProxy.getRegistration();
+                    if (regBinder != null) {
+                        regBinder.addRegistrationCallback(mRegistrationCallback);
+                    }
+                    log("Registration Callback/Listener registered.");
                     // Only record if there isn't a RemoteException.
                     mHasRegisteredForProxy = true;
                 } catch (RemoteException e) {
@@ -1861,51 +1874,29 @@ public class ImsManager {
      */
     private void createImsService() {
         if (!mConfigDynamicBind) {
-            // Old method of binding
+            // Deprecated method of binding
             Rlog.i(TAG, "Creating ImsService using ServiceManager");
-            mImsServiceProxy = getServiceProxyCompat();
+            mImsServiceProxy = ImsServiceProxyCompat.create(mContext, mPhoneId, mDeathRecipient);
         } else {
             Rlog.i(TAG, "Creating ImsService using ImsResolver");
-            mImsServiceProxy = getServiceProxy();
+            mImsServiceProxy = ImsServiceProxy.create(mContext, mPhoneId);
         }
+        // Forwarding interface to tell mStatusCallbacks that the Proxy is unavailable.
+        mImsServiceProxy.setStatusCallback(new ImsServiceProxy.IFeatureUpdate() {
+            @Override
+            public void notifyStateChanged() {
+                mStatusCallbacks.forEach(ImsServiceProxy.IFeatureUpdate::notifyStateChanged);
+            }
+
+            @Override
+            public void notifyUnavailable() {
+                mStatusCallbacks.forEach(ImsServiceProxy.IFeatureUpdate::notifyUnavailable);
+            }
+        });
         // We have created a new ImsService connection, signal for re-registration
         synchronized (mHasRegisteredLock) {
             mHasRegisteredForProxy = false;
         }
-    }
-
-    // Deprecated method of binding with the ImsService defined in the ServiceManager.
-    private ImsServiceProxyCompat getServiceProxyCompat() {
-        IBinder binder = ServiceManager.checkService(IMS_SERVICE);
-
-        if (binder != null) {
-            try {
-                binder.linkToDeath(mDeathRecipient, 0);
-            } catch (RemoteException e) {
-            }
-        }
-
-        return new ImsServiceProxyCompat(mPhoneId, binder);
-    }
-
-    // New method of binding with the ImsResolver
-    private ImsServiceProxy getServiceProxy() {
-        TelephonyManager tm = (TelephonyManager)
-                mContext.getSystemService(Context.TELEPHONY_SERVICE);
-        ImsServiceProxy serviceProxy = new ImsServiceProxy(mPhoneId, ImsFeature.MMTEL);
-        serviceProxy.setStatusCallback(() ->  mStatusCallbacks.forEach(
-                ImsServiceProxy.INotifyStatusChanged::notifyStatusChanged));
-        // Returns null if the service is not available.
-        IImsMMTelFeature b = tm.getImsMMTelFeatureAndListen(mPhoneId,
-                serviceProxy.getListener());
-        if (b != null) {
-            serviceProxy.setBinder(b.asBinder());
-            // Trigger the cache to be updated for feature status.
-            serviceProxy.getFeatureStatus();
-        } else {
-            Rlog.w(TAG, "getServiceProxy: b is null! Phone Id: " + mPhoneId);
-        }
-        return serviceProxy;
     }
 
     /**
@@ -2238,6 +2229,57 @@ public class ImsManager {
         }
     }
 
+    // New API for Registration, uses ImsConnectionStateListener for backwards compatibility with
+    // deprecated APIs.
+    private class ImsRegistrationCallback extends IImsRegistrationCallback.Stub {
+
+        @Override
+        public void onRegistered(int imsRadioTech) {
+            if (DBG) log("onRegistered ::");
+
+            synchronized (mRegistrationListeners) {
+                mRegistrationListeners.forEach(l -> l.onRegistered(imsRadioTech));
+            }
+        }
+
+        @Override
+        public void onRegistering(int imsRadioTech) {
+            if (DBG) log("onRegistering ::");
+
+            synchronized (mRegistrationListeners) {
+                mRegistrationListeners.forEach(l -> l.onRegistering(imsRadioTech));
+            }
+        }
+
+        @Override
+        public void onDeregistered(ImsReasonInfo imsReasonInfo) {
+            if (DBG) log("onDeregistered ::");
+
+            synchronized (mRegistrationListeners) {
+                mRegistrationListeners.forEach(l -> l.onDeregistered(imsReasonInfo));
+            }
+        }
+
+        @Override
+        public void onTechnologyChangeFailed(int targetRadioTech, ImsReasonInfo imsReasonInfo) {
+            if (DBG) log("onTechnologyChangeFailed :: targetAccessTech=" + targetRadioTech +
+                    ", imsReasonInfo=" + imsReasonInfo);
+
+            synchronized (mRegistrationListeners) {
+                mRegistrationListeners.forEach(l -> l.onTechnologyChangeFailed(targetRadioTech,
+                        imsReasonInfo));
+            }
+        }
+
+        @Override
+        public void onSubscriberAssociatedUriChanged(Uri[] uris) {
+            if (DBG) log("onSubscriberAssociatedUriChanged");
+            synchronized (mRegistrationListeners) {
+                mRegistrationListeners.forEach(l -> l.onSubscriberAssociatedUriChanged(uris));
+            }
+        }
+    }
+
     /**
      * Gets the ECBM interface to request ECBM exit.
      *
@@ -2264,6 +2306,68 @@ public class ImsManager {
                     ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN);
         }
         return mEcbm;
+    }
+
+    public void sendSms(int token, int messageRef, String format, String smsc, boolean isRetry,
+            byte[] pdu) throws ImsException {
+        try {
+            mImsServiceProxy.sendSms(token, messageRef, format, smsc, isRetry, pdu);
+        } catch (RemoteException e) {
+            throw new ImsException("sendSms()", e, ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN);
+        }
+    }
+
+    public void acknowledgeSms(int token, int messageRef, int result) throws ImsException {
+        try {
+            mImsServiceProxy.acknowledgeSms(token, messageRef, result);
+        } catch (RemoteException e) {
+            throw new ImsException("acknowledgeSms()", e,
+                    ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN);
+        }
+    }
+
+    public void acknowledgeSmsReport(int token, int messageRef, int result) throws  ImsException{
+        try {
+            mImsServiceProxy.acknowledgeSmsReport(token, messageRef, result);
+        } catch (RemoteException e) {
+            throw new ImsException("acknowledgeSmsReport()", e,
+                    ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN);
+        }
+    }
+
+    public String getSmsFormat() throws ImsException{
+        try {
+            return mImsServiceProxy.getSmsFormat();
+        } catch (RemoteException e) {
+            throw new ImsException("getSmsFormat()", e,
+                    ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN);
+        }
+    }
+
+    public void setSmsListener(IImsSmsListener listener) throws ImsException {
+        try {
+            mImsServiceProxy.setSmsListener(listener);
+        } catch (RemoteException e) {
+            throw new ImsException("setSmsListener()", e,
+                    ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN);
+        }
+    }
+
+    public void onSmsReady() throws ImsException{
+        try {
+            mImsServiceProxy.onSmsReady();
+        } catch (RemoteException e) {
+            throw new ImsException("onSmsReady()", e,
+                    ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN);
+        }
+    }
+
+    public void addRegistrationCallback(ImsRegistrationImplBase.Callback callback) {
+        // TODO: implement (coming in ag/3472519)
+    }
+
+    public void addCapabilitiesCallback(ImsFeature.CapabilityCallback callback) {
+        // TODO: implement (coming in ag/3472519)
     }
 
     /**
