@@ -36,10 +36,15 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import android.telephony.ServiceState;
+import android.telephony.ims.ImsCallProfile;
+import android.telephony.ims.ImsConferenceState;
+import android.telephony.ims.ImsReasonInfo;
+import android.telephony.ims.ImsStreamMediaProfile;
+import android.telephony.ims.ImsSuppServiceNotification;
 import android.util.Log;
 
 import com.android.ims.internal.ICall;
-import com.android.ims.internal.ImsCallSession;
+import android.telephony.ims.ImsCallSession;
 import com.android.ims.internal.ImsStreamMediaSession;
 import com.android.internal.annotations.VisibleForTesting;
 
@@ -1623,6 +1628,7 @@ public class ImsCall implements ICall {
             // Make a copy of the current ImsCallProfile and modify it to enable RTT
             Parcel p = Parcel.obtain();
             mCallProfile.writeToParcel(p, 0);
+            p.setDataPosition(0);
             ImsCallProfile requestedProfile = new ImsCallProfile(p);
             requestedProfile.mMediaProfile.setRttMode(ImsStreamMediaProfile.RTT_MODE_FULL);
 
@@ -3072,6 +3078,7 @@ public class ImsCall implements ICall {
         public void callSessionRttModifyRequestReceived(ImsCallSession session,
                 ImsCallProfile callProfile) {
             ImsCall.Listener listener;
+            logi("callSessionRttModifyRequestReceived");
 
             synchronized(ImsCall.this) {
                 listener = mListener;
@@ -3096,6 +3103,7 @@ public class ImsCall implements ICall {
         public void callSessionRttModifyResponseReceived(int status) {
             ImsCall.Listener listener;
 
+            logi("callSessionRttModifyResponseReceived");
             synchronized(ImsCall.this) {
                 listener = mListener;
             }
