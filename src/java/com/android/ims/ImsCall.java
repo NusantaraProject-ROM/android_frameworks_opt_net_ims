@@ -3169,7 +3169,7 @@ public class ImsCall implements ICall {
         public void callSessionRttModifyResponseReceived(int status) {
             ImsCall.Listener listener;
 
-            logi("callSessionRttModifyResponseReceived");
+            logi("callSessionRttModifyResponseReceived: " + status);
             synchronized(ImsCall.this) {
                 listener = mListener;
             }
