@@ -1107,6 +1107,7 @@ public class ImsCall implements ICall {
 
         synchronized(mLockObj) {
             mSession = session;
+            mIsConferenceHost = true;
 
             try {
                 session.setListener(createCallSessionListener());
@@ -1750,6 +1751,7 @@ public class ImsCall implements ICall {
         if (mediaProfile.mVideoQuality != ImsStreamMediaProfile.VIDEO_QUALITY_NONE) {
             mediaProfile.mVideoDirection = ImsStreamMediaProfile.DIRECTION_SEND;
         }
+        mediaProfile.mRttMode = mCallProfile.mMediaProfile.mRttMode;
 
         return mediaProfile;
     }
@@ -1768,6 +1770,7 @@ public class ImsCall implements ICall {
         if (mediaProfile.mVideoQuality != ImsStreamMediaProfile.VIDEO_QUALITY_NONE) {
             mediaProfile.mVideoDirection = ImsStreamMediaProfile.DIRECTION_SEND_RECEIVE;
         }
+        mediaProfile.mRttMode = mCallProfile.mMediaProfile.mRttMode;
 
         return mediaProfile;
     }
@@ -2275,6 +2278,25 @@ public class ImsCall implements ICall {
         return;
     }
 
+    /**
+     * Sends RTT Upgrade request
+     *
+     * @param to   : expected profile
+     * @throws CallStateException
+     */
+    public void sendRttModifyRequest(ImsCallProfile to) throws ImsException {
+        logi("RTT: sendRttModifyRequest");
+
+        synchronized(mLockObj) {
+            if (mSession == null) {
+                loge("RTT: sendRttModifyRequest :: no call session");
+                throw new ImsException("No call session",
+                        ImsReasonInfo.CODE_LOCAL_CALL_TERMINATED);
+            }
+            mSession.sendRttModifyRequest(to);
+        }
+    }
+
     @VisibleForTesting
     public class ImsCallSessionListenerProxy extends ImsCallSession.Listener {
         @Override
@@ -2348,6 +2370,11 @@ public class ImsCall implements ICall {
                 logi("callSessionStartFailed :: not supported for transient conference session=" +
                         session);
                 return;
+            }
+            if (mIsConferenceHost) {
+                // If the dial request was a group calling one, this call would have
+                // been marked the conference host as part of the request.
+                mIsConferenceHost = false;
             }
 
             ImsCall.Listener listener;
@@ -3142,7 +3169,7 @@ public class ImsCall implements ICall {
         public void callSessionRttModifyResponseReceived(int status) {
             ImsCall.Listener listener;
 
-            logi("callSessionRttModifyResponseReceived");
+            logi("callSessionRttModifyResponseReceived: " + status);
             synchronized(ImsCall.this) {
                 listener = mListener;
             }

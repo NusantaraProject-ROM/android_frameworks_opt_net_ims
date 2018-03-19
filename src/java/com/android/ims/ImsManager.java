@@ -49,6 +49,7 @@ import com.android.ims.internal.IImsMultiEndpoint;
 import com.android.ims.internal.IImsUt;
 import android.telephony.ims.ImsCallSession;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.telephony.TelephonyProperties;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -1285,6 +1286,12 @@ public class ImsManager {
             }
         }
 
+        int subId = getSubId();
+        if (!SubscriptionManager.from(mContext).isActiveSubId(subId)) {
+            log("updateImsServiceConfigForSlot: subId not active: " + subId);
+            return;
+        }
+
         if (!mConfigUpdated || force) {
             try {
                 // TODO: Extend ImsConfig API and set all feature values in single function call.
@@ -1383,7 +1390,8 @@ public class ImsManager {
         log("updateWfcFeatureAndProvisionedValues: available = " + available
                 + ", enabled = " + enabled
                 + ", mode = " + mode
-                + ", roaming = " + roaming);
+                + ", roaming = " + roaming
+                + ", isNetworkRoaming = " + isNetworkRoaming);
 
         changeMmTelCapability(MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE,
                 ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN, isFeatureOn);
@@ -1720,8 +1728,10 @@ public class ImsManager {
 
         call.setListener(listener);
         ImsCallSession session = createCallSession(profile);
+        boolean isConferenceUri = profile.getCallExtraBoolean(
+                TelephonyProperties.EXTRAS_IS_CONFERENCE_URI, false);
 
-        if ((callees != null) && (callees.length == 1)) {
+        if (!isConferenceUri && (callees != null) && (callees.length == 1)) {
             call.start(session, callees[0]);
         } else {
             call.start(session, callees);
@@ -2208,11 +2218,33 @@ public class ImsManager {
         }
     }
 
-    public void onSmsReady() throws ImsException{
+    public void onSmsReady() throws ImsException {
         try {
             mMmTelFeatureConnection.onSmsReady();
         } catch (RemoteException e) {
             throw new ImsException("onSmsReady()", e,
+                    ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN);
+        }
+    }
+
+    /**
+     * Determines whether or not a call with the specified numbers should be placed over IMS or over
+     * CSFB.
+     * @param isEmergency is at least one call an emergency number.
+     * @param numbers A {@link String} array containing the numbers in the call being placed. Can
+     *         be multiple numbers in the case of dialing out a conference.
+     * @return The result of the query, one of the following values:
+     *         - {@link MmTelFeature#PROCESS_CALL_IMS}
+     *         - {@link MmTelFeature#PROCESS_CALL_CSFB}
+     * @throws ImsException if the ImsService is not available. In this case, we should fall back
+     * to CSFB anyway.
+     */
+    public @MmTelFeature.ProcessCallResult int shouldProcessCall(boolean isEmergency,
+            String[] numbers) throws ImsException {
+        try {
+            return mMmTelFeatureConnection.shouldProcessCall(isEmergency, numbers);
+        } catch (RemoteException e) {
+            throw new ImsException("shouldProcessCall()", e,
                     ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN);
         }
     }
