@@ -380,10 +380,16 @@ public class ImsVideoCallProviderWrapper extends Connection.VideoProvider {
      */
     @VisibleForTesting
     public static boolean isResumeRequest(int from, int to) {
+        /* Consider modify request as resume request if below conditions are met:
+         * 1. from video state is paused
+         * 2. to video state is not paused
+         * 3. unpaused from video state matches with to video state
+         */
         boolean fromPaused = VideoProfile.isPaused(from);
         boolean toPaused = VideoProfile.isPaused(to);
+        int fromUnPaused = from & (~VideoProfile.STATE_PAUSED);
 
-        return fromPaused && !toPaused;
+        return fromPaused && !toPaused && (fromUnPaused == to);
     }
 
     /**
