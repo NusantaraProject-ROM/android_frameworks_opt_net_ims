@@ -475,6 +475,16 @@ public class ImsCall implements ICall {
          */
         public void onMultipartyStateChanged(ImsCall imsCall, boolean isMultiParty) {
         }
+
+        /**
+         * Called when the call session property has changed
+         *
+         * @param imsCall ImsCall object
+         * @param int property - an integer containing masks for different properties
+         * {e.g. @see Connection#PROPERTY_RTT_AUDIO_SPEECH}
+         */
+        public void onCallSessionPropertyChanged(ImsCall imsCall, int property) {
+        }
     }
 
     // List of update operation for IMS call control
@@ -1645,6 +1655,15 @@ public class ImsCall implements ICall {
             }
             mSession.sendRttMessage(rttMessage);
         }
+    }
+
+    /**
+     * Checks if the call is RTT call.
+     *
+     * @return true if the call is RTT call
+     */
+    public boolean isRttCall() {
+        return mCallProfile.mMediaProfile.isRttCall();
     }
 
     /**
@@ -3195,7 +3214,24 @@ public class ImsCall implements ICall {
                 try {
                     listener.onRttMessageReceived(ImsCall.this, rttMessage);
                 } catch (Throwable t) {
-                    loge("callSessionRttModifyResponseReceived:: ", t);
+                    loge("callSessionRttMessageReceived:: ", t);
+                }
+            }
+        }
+
+        @Override
+        public void callSessionPropertyChanged(int property) {
+            ImsCall.Listener listener;
+
+            synchronized(ImsCall.this) {
+                listener = mListener;
+            }
+
+            if (listener != null) {
+                try {
+                    listener.onCallSessionPropertyChanged(ImsCall.this, property);
+                } catch (Throwable t) {
+                    loge("callSessionPropertyChanged:: ", t);
                 }
             }
         }
