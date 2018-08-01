@@ -1586,7 +1586,7 @@ public class ImsCall implements ICall {
      * @param result the result message to send when done.
      */
     public void sendDtmf(char c, Message result) {
-        logi("sendDtmf :: code=" + c);
+        logi("sendDtmf :: ");
 
         synchronized(mLockObj) {
             if (mSession != null) {
@@ -1603,7 +1603,7 @@ public class ImsCall implements ICall {
      * @param c that represents the DTMF to send. '0' ~ '9', 'A' ~ 'D', '*', '#' are valid inputs.
      */
     public void startDtmf(char c) {
-        logi("startDtmf :: code=" + c);
+        logi("startDtmf :: ");
 
         synchronized(mLockObj) {
             if (mSession != null) {
