@@ -436,7 +436,8 @@ public class ImsManager {
 
     /**
      * Returns the user configuration of Enhanced 4G LTE Mode setting for slot. If the option is
-     * not editable ({@link CarrierConfigManager#KEY_EDITABLE_ENHANCED_4G_LTE_BOOL} is false), or
+     * not editable ({@link CarrierConfigManager#KEY_EDITABLE_ENHANCED_4G_LTE_BOOL} is false),
+     * hidden ({@link CarrierConfigManager#KEY_HIDE_ENHANCED_4G_LTE_BOOL} is true), or
      * the setting is not initialized, this method will return default value specified by
      * {@link CarrierConfigManager#KEY_ENHANCED_4G_LTE_ON_BY_DEFAULT_BOOL}.
      *
@@ -450,8 +451,10 @@ public class ImsManager {
         boolean onByDefault = getBooleanCarrierConfig(
                 CarrierConfigManager.KEY_ENHANCED_4G_LTE_ON_BY_DEFAULT_BOOL);
 
-        // If Enhanced 4G LTE Mode is uneditable or not initialized, we use the default value
+        // If Enhanced 4G LTE Mode is uneditable, hidden or not initialized, we use the default
+        // value
         if (!getBooleanCarrierConfig(CarrierConfigManager.KEY_EDITABLE_ENHANCED_4G_LTE_BOOL)
+                || getBooleanCarrierConfig(CarrierConfigManager.KEY_HIDE_ENHANCED_4G_LTE_BOOL)
                 || setting == SUB_PROPERTY_NOT_INITIALIZED) {
             return onByDefault;
         } else {
@@ -476,15 +479,16 @@ public class ImsManager {
 
     /**
      * Change persistent Enhanced 4G LTE Mode setting. If the option is not editable
-     * ({@link CarrierConfigManager#KEY_EDITABLE_ENHANCED_4G_LTE_BOOL} is false), this method will
-     * set the setting to the default value specified by
+     * ({@link CarrierConfigManager#KEY_EDITABLE_ENHANCED_4G_LTE_BOOL} is false)
+     * or hidden ({@link CarrierConfigManager#KEY_HIDE_ENHANCED_4G_LTE_BOOL} is true),
+     * this method will set the setting to the default value specified by
      * {@link CarrierConfigManager#KEY_ENHANCED_4G_LTE_ON_BY_DEFAULT_BOOL}.
-     *
      */
     public void setEnhanced4gLteModeSetting(boolean enabled) {
         int subId = getSubId();
-        // If editable=false, we must keep default advanced 4G mode.
-        if (!getBooleanCarrierConfig(CarrierConfigManager.KEY_EDITABLE_ENHANCED_4G_LTE_BOOL)) {
+        // If editable=false or hidden=true, we must keep default advanced 4G mode.
+        if (!getBooleanCarrierConfig(CarrierConfigManager.KEY_EDITABLE_ENHANCED_4G_LTE_BOOL) ||
+                getBooleanCarrierConfig(CarrierConfigManager.KEY_HIDE_ENHANCED_4G_LTE_BOOL)) {
             enabled = getBooleanCarrierConfig(
                     CarrierConfigManager.KEY_ENHANCED_4G_LTE_ON_BY_DEFAULT_BOOL);
         }
@@ -496,13 +500,13 @@ public class ImsManager {
         if (prevSetting != (enabled ?
                    ImsConfig.FeatureValueConstants.ON :
                    ImsConfig.FeatureValueConstants.OFF)) {
-            if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+            if (isSubIdValid(subId)) {
                 SubscriptionManager.setSubscriptionProperty(subId,
                         SubscriptionManager.ENHANCED_4G_MODE_ENABLED,
                         booleanToPropertyString(enabled));
             } else {
                 loge("setEnhanced4gLteModeSetting: invalid sub id, can not set property in " +
-                        " siminfo db.");
+                        " siminfo db; subId=" + subId);
             }
             if (isNonTtyOrTtyOnVolteEnabled()) {
                 try {
@@ -770,11 +774,12 @@ public class ImsManager {
      */
     public void setVtSetting(boolean enabled) {
         int subId = getSubId();
-        if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+        if (isSubIdValid(subId)) {
             SubscriptionManager.setSubscriptionProperty(subId, SubscriptionManager.VT_IMS_ENABLED,
                     booleanToPropertyString(enabled));
         } else {
-            loge("setVtSetting: sub id invalid, skip modifying vt state in subinfo db.");
+            loge("setVtSetting: sub id invalid, skip modifying vt state in subinfo db; subId="
+                    + subId);
         }
 
         try {
@@ -886,11 +891,12 @@ public class ImsManager {
      */
     public void setWfcSetting(boolean enabled) {
         int subId = getSubId();
-        if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+        if (isSubIdValid(subId)) {
             SubscriptionManager.setSubscriptionProperty(subId, SubscriptionManager.WFC_IMS_ENABLED,
                     booleanToPropertyString(enabled));
         } else {
-            loge("setWfcSetting: invalid sub id, can not set WFC setting in siminfo db");
+            loge("setWfcSetting: invalid sub id, can not set WFC setting in siminfo db; subId="
+                    + subId);
         }
 
         TelephonyManager tm = (TelephonyManager)
@@ -972,11 +978,11 @@ public class ImsManager {
         if (DBG) log("setWfcMode(i) - setting=" + wfcMode);
 
         int subId = getSubId();
-        if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+        if (isSubIdValid(subId)) {
             SubscriptionManager.setSubscriptionProperty(subId, SubscriptionManager.WFC_IMS_MODE,
                     Integer.toString(wfcMode));
         } else {
-            loge("setWfcMode: invalid sub id, skip setting value in siminfo db");
+            loge("setWfcMode: invalid sub id, skip setting value in siminfo db; subId=" + subId);
         }
 
         setWfcModeInternal(wfcMode);
@@ -1072,7 +1078,7 @@ public class ImsManager {
      */
     public void setWfcMode(int wfcMode, boolean roaming) {
         int subId = getSubId();
-        if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+        if (isSubIdValid(subId)) {
             if (!roaming) {
                 if (DBG) log("setWfcMode(i,b) - setting=" + wfcMode);
                 SubscriptionManager.setSubscriptionProperty(subId, SubscriptionManager.WFC_IMS_MODE,
@@ -1083,7 +1089,8 @@ public class ImsManager {
                         SubscriptionManager.WFC_IMS_ROAMING_MODE, Integer.toString(wfcMode));
             }
         } else {
-            loge("setWfcMode(i,b): invalid sub id, skip setting setting in siminfo db");
+            loge("setWfcMode(i,b): invalid sub id, skip setting setting in siminfo db; subId="
+                    + subId);
         }
 
         TelephonyManager tm = (TelephonyManager)
@@ -2348,7 +2355,7 @@ public class ImsManager {
      */
     public void factoryReset() {
         int subId = getSubId();
-        if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+        if (isSubIdValid(subId)) {
             // Set VoLTE to default
             SubscriptionManager.setSubscriptionProperty(subId,
                     SubscriptionManager.ENHANCED_4G_MODE_ENABLED,
@@ -2378,7 +2385,7 @@ public class ImsManager {
             SubscriptionManager.setSubscriptionProperty(subId,
                     SubscriptionManager.VT_IMS_ENABLED, booleanToPropertyString(true));
         } else {
-            loge("factoryReset: invalid sub id, can not reset siminfo db settings");
+            loge("factoryReset: invalid sub id, can not reset siminfo db settings; subId=" + subId);
         }
 
         // Push settings to ImsConfig
@@ -2437,5 +2444,16 @@ public class ImsManager {
         pw.println("  isVtProvisionedOnDevice = " + isVtProvisionedOnDevice());
         pw.println("  isWfcProvisionedOnDevice = " + isWfcProvisionedOnDevice());
         pw.flush();
+    }
+
+    /**
+     * Determines if a sub id is valid.
+     * Mimics the logic in SubscriptionController.validateSubId.
+     * @param subId The sub id to check.
+     * @return {@code true} if valid, {@code false} otherwise.
+     */
+    private boolean isSubIdValid(int subId) {
+        return SubscriptionManager.isValidSubscriptionId(subId) &&
+                subId != SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
     }
 }
