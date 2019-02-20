@@ -372,6 +372,16 @@ public class ImsManager {
         }
     }
 
+
+    @VisibleForTesting
+    public interface ExecutorFactory {
+        void executeRunnable(Runnable runnable);
+    }
+
+    // Replaced with single-threaded executor for testing.
+    @VisibleForTesting
+    public ExecutorFactory mExecutorFactory = runnable -> new Thread(runnable).start();
+
     private static HashMap<Integer, ImsManager> sImsManagerInstances =
             new HashMap<Integer, ImsManager>();
 
@@ -1144,7 +1154,7 @@ public class ImsManager {
 
     private void setWfcModeInternal(int wfcMode) {
         final int value = wfcMode;
-        Thread thread = new Thread(() -> {
+        mExecutorFactory.executeRunnable(() -> {
             try {
                 getConfigInterface().setConfig(
                         ProvisioningManager.KEY_VOICE_OVER_WIFI_MODE_OVERRIDE, value);
@@ -1152,7 +1162,6 @@ public class ImsManager {
                 // do nothing
             }
         });
-        thread.start();
     }
 
     /**
@@ -1214,7 +1223,7 @@ public class ImsManager {
         final int value = enabled
                 ? ProvisioningManager.PROVISIONING_VALUE_ENABLED
                 : ProvisioningManager.PROVISIONING_VALUE_DISABLED;
-        Thread thread = new Thread(() -> {
+        mExecutorFactory.executeRunnable(() -> {
             try {
                 getConfigInterface().setConfig(
                         ProvisioningManager.KEY_VOICE_OVER_WIFI_ROAMING_ENABLED_OVERRIDE, value);
@@ -1222,7 +1231,6 @@ public class ImsManager {
                 // do nothing
             }
         });
-        thread.start();
     }
 
     /**
@@ -1400,16 +1408,19 @@ public class ImsManager {
                 // Note: currently the order of updates is set to produce different order of
                 // changeEnabledCapabilities() function calls from setAdvanced4GMode(). This is done
                 // to differentiate this code path from vendor code perspective.
-                boolean isImsUsed = updateVolteFeatureValue();
-                isImsUsed |= updateWfcFeatureAndProvisionedValues();
-                isImsUsed |= updateVideoCallFeatureValue();
-                isImsUsed |= updateRttConfigValue();
-
+                CapabilityChangeRequest request = new CapabilityChangeRequest();
+                updateVolteFeatureValue(request);
+                updateWfcFeatureAndProvisionedValues(request);
+                updateVideoCallFeatureValue(request);
+                boolean isImsNeededForRtt = updateRttConfigValue();
                 // Supplementary services over UT do not require IMS registration. Do not alter IMS
                 // registration based on UT.
-                updateUtFeatureValue();
+                updateUtFeatureValue(request);
 
-                if (isImsUsed || !isTurnOffImsAllowedByPlatform()) {
+                // Send the batched request to the modem.
+                changeMmTelCapability(request);
+
+                if (isImsNeededForRtt || !isTurnOffImsAllowedByPlatform() || isImsNeeded(request)) {
                     // Turn on IMS if it is used.
                     // Also, if turning off is not allowed for current carrier,
                     // we need to turn IMS on because it might be turned off before
@@ -1430,12 +1441,17 @@ public class ImsManager {
         }
     }
 
+    private boolean isImsNeeded(CapabilityChangeRequest r) {
+        // IMS is not needed for UT, so only enabled IMS if any other capability is enabled.
+        return r.getCapabilitiesToEnable().stream()
+                .anyMatch((c) ->
+                        (c.getCapability() != MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_UT));
+    }
+
     /**
      * Update VoLTE config
-     * @return whether feature is On
-     * @throws ImsException
      */
-    private boolean updateVolteFeatureValue() throws ImsException {
+    private void updateVolteFeatureValue(CapabilityChangeRequest request) {
         boolean available = isVolteEnabledByPlatform();
         boolean enabled = isEnhanced4gLteModeSettingEnabledByUser();
         boolean isNonTty = isNonTtyOrTtyOnVolteEnabled();
@@ -1445,18 +1461,21 @@ public class ImsManager {
                 + ", enabled = " + enabled
                 + ", nonTTY = " + isNonTty);
 
-        changeMmTelCapability(MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE,
-                ImsRegistrationImplBase.REGISTRATION_TECH_LTE, isFeatureOn);
-
-        return isFeatureOn;
+        if (isFeatureOn) {
+            request.addCapabilitiesToEnableForTech(
+                    MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE,
+                    ImsRegistrationImplBase.REGISTRATION_TECH_LTE);
+        } else {
+            request.addCapabilitiesToDisableForTech(
+                    MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE,
+                    ImsRegistrationImplBase.REGISTRATION_TECH_LTE);
+        }
     }
 
     /**
      * Update video call over LTE config
-     * @return whether feature is On
-     * @throws ImsException
      */
-    private boolean updateVideoCallFeatureValue() throws ImsException {
+    private void updateVideoCallFeatureValue(CapabilityChangeRequest request) {
         boolean available = isVtEnabledByPlatform();
         boolean enabled = isVtEnabledByUser();
         boolean isNonTty = isNonTtyOrTtyOnVolteEnabled();
@@ -1472,18 +1491,21 @@ public class ImsManager {
                 + ", nonTTY = " + isNonTty
                 + ", data enabled = " + isDataEnabled);
 
-        changeMmTelCapability(MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VIDEO,
-                ImsRegistrationImplBase.REGISTRATION_TECH_LTE, isFeatureOn);
-
-        return isFeatureOn;
+        if (isFeatureOn) {
+            request.addCapabilitiesToEnableForTech(
+                    MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VIDEO,
+                    ImsRegistrationImplBase.REGISTRATION_TECH_LTE);
+        } else {
+            request.addCapabilitiesToDisableForTech(
+                    MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VIDEO,
+                    ImsRegistrationImplBase.REGISTRATION_TECH_LTE);
+        }
     }
 
     /**
      * Update WFC config
-     * @return whether feature is On
-     * @throws ImsException
      */
-    private boolean updateWfcFeatureAndProvisionedValues() throws ImsException {
+    private void updateWfcFeatureAndProvisionedValues(CapabilityChangeRequest request) {
         TelephonyManager tm = new TelephonyManager(mContext, getSubId());
         boolean isNetworkRoaming = tm.isNetworkRoaming();
         boolean available = isWfcEnabledByPlatform();
@@ -1498,8 +1520,15 @@ public class ImsManager {
                 + ", roaming = " + roaming
                 + ", isNetworkRoaming = " + isNetworkRoaming);
 
-        changeMmTelCapability(MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE,
-                ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN, isFeatureOn);
+        if (isFeatureOn) {
+            request.addCapabilitiesToEnableForTech(
+                    MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE,
+                    ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN);
+        } else {
+            request.addCapabilitiesToDisableForTech(
+                    MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE,
+                    ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN);
+        }
 
         if (!isFeatureOn) {
             mode = ImsMmTelManager.WIFI_MODE_CELLULAR_PREFERRED;
@@ -1507,12 +1536,10 @@ public class ImsManager {
         }
         setWfcModeInternal(mode);
         setWfcRoamingSettingInternal(roaming);
-
-        return isFeatureOn;
     }
 
 
-    private boolean updateUtFeatureValue() throws ImsException {
+    private void updateUtFeatureValue(CapabilityChangeRequest request) {
         boolean isCarrierSupported = isSuppServicesOverUtEnabledByPlatform();
         boolean requiresProvisioning = getBooleanCarrierConfig(
                 CarrierConfigManager.KEY_CARRIER_UT_PROVISIONING_REQUIRED_BOOL);
@@ -1533,7 +1560,6 @@ public class ImsManager {
                 Log.e(TAG, "updateUtFeatureValue: couldn't reach telephony! returning provisioned");
             }
         }
-        CapabilityChangeRequest request = new CapabilityChangeRequest();
         boolean isFeatureOn = isCarrierSupported && isProvisioned;
 
         log("updateUtFeatureValue: available = " + isCarrierSupported
@@ -1549,13 +1575,6 @@ public class ImsManager {
                     MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_UT,
                     ImsRegistrationImplBase.REGISTRATION_TECH_LTE);
         }
-        try {
-            mMmTelFeatureConnection.changeEnabledCapabilities(request, null);
-        } catch (RemoteException e) {
-            throw new ImsException("updateUtFeatureValue()", e,
-                    ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN);
-        }
-        return isFeatureOn;
     }
 
     /**
@@ -2078,7 +2097,6 @@ public class ImsManager {
             @MmTelFeature.MmTelCapabilities.MmTelCapability int capability,
             @ImsRegistrationImplBase.ImsRegistrationTech int radioTech,
             boolean isEnabled) throws ImsException {
-        checkAndThrowExceptionIfServiceUnavailable();
 
         CapabilityChangeRequest request = new CapabilityChangeRequest();
         if (isEnabled) {
@@ -2086,18 +2104,31 @@ public class ImsManager {
         } else {
             request.addCapabilitiesToDisableForTech(capability, radioTech);
         }
+        changeMmTelCapability(request);
+    }
+
+    public void changeMmTelCapability(CapabilityChangeRequest r) throws ImsException {
+        checkAndThrowExceptionIfServiceUnavailable();
         try {
-            mMmTelFeatureConnection.changeEnabledCapabilities(request, null);
-            if (mImsConfigListener != null) {
-                mImsConfigListener.onSetFeatureResponse(capability,
-                        mMmTelFeatureConnection.getRegistrationTech(),
-                        isEnabled ? ProvisioningManager.PROVISIONING_VALUE_ENABLED
-                                : ProvisioningManager.PROVISIONING_VALUE_DISABLED, -1);
-            }
             Log.i(TAG, "changeMmTelCapability: changing capabilities for sub: " + getSubId()
-                    + ", request: " + request);
+                    + ", request: " + r);
+            mMmTelFeatureConnection.changeEnabledCapabilities(r, null);
+            if (mImsConfigListener == null) {
+                return;
+            }
+            for (CapabilityChangeRequest.CapabilityPair enabledCaps : r.getCapabilitiesToEnable()) {
+                mImsConfigListener.onSetFeatureResponse(enabledCaps.getCapability(),
+                        enabledCaps.getRadioTech(),
+                        ProvisioningManager.PROVISIONING_VALUE_ENABLED, -1);
+            }
+            for (CapabilityChangeRequest.CapabilityPair disabledCaps :
+                    r.getCapabilitiesToDisable()) {
+                mImsConfigListener.onSetFeatureResponse(disabledCaps.getCapability(),
+                        disabledCaps.getRadioTech(),
+                        ProvisioningManager.PROVISIONING_VALUE_DISABLED, -1);
+            }
         } catch (RemoteException e) {
-            throw new ImsException("changeMmTelCapability()", e,
+            throw new ImsException("changeMmTelCapability(CCR)", e,
                     ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN);
         }
     }
@@ -2117,7 +2148,7 @@ public class ImsManager {
     private void setRttConfig(boolean enabled) {
         final int value = enabled ? ProvisioningManager.PROVISIONING_VALUE_ENABLED :
                 ProvisioningManager.PROVISIONING_VALUE_DISABLED;
-        Thread thread = new Thread(() -> {
+        mExecutorFactory.executeRunnable(() -> {
             try {
                 Log.i(ImsManager.class.getSimpleName(), "Setting RTT enabled to " + enabled);
                 getConfigInterface().setProvisionedValue(
@@ -2127,7 +2158,6 @@ public class ImsManager {
                         + enabled + ": " + e);
             }
         });
-        thread.start();
     }
 
     public boolean queryMmTelCapability(
@@ -2411,7 +2441,7 @@ public class ImsManager {
                     ImsRegistrationImplBase.REGISTRATION_TECH_LTE);
         }
 
-        if (isVolteEnabledByPlatform()) {
+        if (isVtEnabledByPlatform()) {
             boolean ignoreDataEnabledChanged = getBooleanCarrierConfig(
                     CarrierConfigManager.KEY_IGNORE_DATA_ENABLED_CHANGED_FOR_VIDEO_CALLS);
             boolean enableViLte = turnOn && isVtEnabledByUser() &&
