@@ -494,16 +494,6 @@ public class ImsCall implements ICall {
          */
         public void onCallQualityChanged(ImsCall imsCall, CallQuality callQuality) {
         }
-
-        /**
-         * Called when the call session property has changed
-         *
-         * @param imsCall ImsCall object
-         * @param int property - an integer containing masks for different properties
-         * {e.g. @see Connection#PROPERTY_RTT_AUDIO_SPEECH}
-         */
-        public void onCallSessionPropertyChanged(ImsCall imsCall, int property) {
-        }
     }
 
     // List of update operation for IMS call control
@@ -3225,22 +3215,6 @@ public class ImsCall implements ICall {
                     listener.onRttMessageReceived(ImsCall.this, rttMessage);
                 } catch (Throwable t) {
                     loge("callSessionRttMessageReceived:: ", t);
-                }
-            }
-        }
-
-        public void callSessionPropertyChanged(int property) {
-            ImsCall.Listener listener;
-
-            synchronized(ImsCall.this) {
-                listener = mListener;
-            }
-
-            if (listener != null) {
-                try {
-                    listener.onCallSessionPropertyChanged(ImsCall.this, property);
-                } catch (Throwable t) {
-                    loge("callSessionPropertyChanged:: ", t);
                 }
             }
         }
