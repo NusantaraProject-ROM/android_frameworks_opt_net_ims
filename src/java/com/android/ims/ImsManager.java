@@ -229,45 +229,50 @@ public class ImsManager {
                 new MmTelFeatureConnection.IFeatureUpdate() {
                     @Override
                     public void notifyStateChanged() {
-                        try {
-                            int status = ImsFeature.STATE_UNAVAILABLE;
-                            synchronized (mLock) {
-                                if (mImsManager != null) {
-                                    status = mImsManager.getImsServiceState();
+                        mExecutor.execute(() -> {
+                            try {
+                                int status = ImsFeature.STATE_UNAVAILABLE;
+                                synchronized (mLock) {
+                                    if (mImsManager != null) {
+                                        status = mImsManager.getImsServiceState();
+                                    }
                                 }
+                                switch (status) {
+                                    case ImsFeature.STATE_READY: {
+                                        notifyReady();
+                                        break;
+                                    }
+                                    case ImsFeature.STATE_INITIALIZING:
+                                        // fall through
+                                    case ImsFeature.STATE_UNAVAILABLE: {
+                                        notifyNotReady();
+                                        break;
+                                    }
+                                    default: {
+                                        Log.w(TAG, "Unexpected State!");
+                                    }
+                                }
+                            } catch (ImsException e) {
+                                // Could not get the ImsService, retry!
+                                notifyNotReady();
+                                retryGetImsService();
                             }
-                            switch (status) {
-                                case ImsFeature.STATE_READY: {
-                                    notifyReady();
-                                    break;
-                                }
-                                case ImsFeature.STATE_INITIALIZING:
-                                    // fall through
-                                case ImsFeature.STATE_UNAVAILABLE: {
-                                    notifyNotReady();
-                                    break;
-                                }
-                                default: {
-                                    Log.w(TAG, "Unexpected State!");
-                                }
-                            }
-                        } catch (ImsException e) {
-                            // Could not get the ImsService, retry!
-                            notifyNotReady();
-                            retryGetImsService();
-                        }
+                        });
                     }
 
                     @Override
                     public void notifyUnavailable() {
-                        notifyNotReady();
-                        retryGetImsService();
+                        mExecutor.execute(() -> {
+                            notifyNotReady();
+                            retryGetImsService();
+                        });
                     }
                 };
 
         private final Context mContext;
         private final int mPhoneId;
         private final Listener mListener;
+        private final Executor mExecutor;
         private final Object mLock = new Object();
 
         private int mRetryCount = 0;
@@ -288,14 +293,17 @@ public class ImsManager {
             mContext = context;
             mPhoneId = phoneId;
             mListener = listener;
+            mExecutor = new HandlerExecutor(this);
         }
 
-        public Connector(Context context, int phoneId, Listener listener, Looper looper) {
-            super(looper);
+        @VisibleForTesting
+        public Connector(Context context, int phoneId, Listener listener, Executor executor) {
             mContext = context;
             mPhoneId = phoneId;
             mListener= listener;
+            mExecutor = executor;
         }
+
 
         /**
          * Start the creation of a connection to the underlying ImsService implementation. When the
@@ -325,15 +333,18 @@ public class ImsManager {
 
         private void retryGetImsService() {
             synchronized (mLock) {
-                // remove callback so we do not receive updates from old ImsServiceProxy when
-                // switching between ImsServices.
-                mImsManager.removeNotifyStatusChangedCallback(mNotifyStatusChangedCallback);
-                //Leave mImsManager as null, then CallStateException will be thrown when dialing
-                mImsManager = null;
+                if (mImsManager != null) {
+                    // remove callback so we do not receive updates from old ImsServiceProxy when
+                    // switching between ImsServices.
+                    mImsManager.removeNotifyStatusChangedCallback(mNotifyStatusChangedCallback);
+                    //Leave mImsManager as null, then CallStateException will be thrown when dialing
+                    mImsManager = null;
+                }
+
+                // Exponential backoff during retry, limited to 32 seconds.
+                removeCallbacks(mGetServiceRunnable);
+                postDelayed(mGetServiceRunnable, mRetryTimeout.get());
             }
-            // Exponential backoff during retry, limited to 32 seconds.
-            removeCallbacks(mGetServiceRunnable);
-            postDelayed(mGetServiceRunnable, mRetryTimeout.get());
         }
 
         private void getImsService() throws ImsException {
