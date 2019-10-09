@@ -2159,10 +2159,12 @@ public class ImsManager {
     public boolean updateRttConfigValue() {
         boolean isCarrierSupported =
                 getBooleanCarrierConfig(CarrierConfigManager.KEY_RTT_SUPPORTED_BOOL);
-        boolean isRttAlwaysEnabled =
-                getBooleanCarrierConfig(CarrierConfigManager.KEY_RTT_ALWAYS_ENABLED_BOOL);
+        if (getBooleanCarrierConfig(CarrierConfigManager.KEY_RTT_ALWAYS_ENABLED_BOOL)) {
+            Settings.Secure.putInt(mContext.getContentResolver(),
+                    Settings.Secure.RTT_CALLING_MODE + convertRttPhoneId(mPhoneId), 1);
+        }
         boolean isRttEnabled = Settings.Secure.getInt(mContext.getContentResolver(),
-                Settings.Secure.RTT_CALLING_MODE, 0) != 0 || isRttAlwaysEnabled;
+                Settings.Secure.RTT_CALLING_MODE + convertRttPhoneId(mPhoneId), 0) != 0;
         Log.i(ImsManager.class.getSimpleName(), "update RTT value " + isRttEnabled);
         if (isCarrierSupported == true) {
             setRttConfig(isRttEnabled);
@@ -2183,6 +2185,10 @@ public class ImsManager {
                         + enabled + ": " + e);
             }
         });
+    }
+
+    private static String convertRttPhoneId(int phoneId) {
+        return phoneId != 0 ? Integer.toString(phoneId) : "";
     }
 
     public boolean queryMmTelCapability(
