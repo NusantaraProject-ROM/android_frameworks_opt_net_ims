@@ -33,7 +33,7 @@ import android.provider.Settings;
 import android.telecom.TelecomManager;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.CarrierConfigManager;
-import android.telephony.Rlog;
+import com.android.telephony.Rlog;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyFrameworkInitializer;
 import android.telephony.TelephonyManager;
@@ -2624,7 +2624,7 @@ public class ImsManager implements IFeatureConnector {
     }
 
     private boolean isDataEnabled() {
-        return new TelephonyManager(mContext, getSubId()).isDataCapable();
+        return new TelephonyManager(mContext, getSubId()).isDataConnectionEnabled();
     }
 
     private boolean isVolteProvisioned() {
