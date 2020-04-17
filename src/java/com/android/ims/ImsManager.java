@@ -59,6 +59,7 @@ import com.android.ims.internal.IImsMultiEndpoint;
 import com.android.ims.internal.IImsUt;
 import android.telephony.ims.ImsCallSession;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.telephony.TelephonyProperties;
 import com.android.internal.telephony.ITelephony;
 
 import java.io.FileDescriptor;
@@ -1419,6 +1420,12 @@ public class ImsManager {
             }
         }
 
+        int subId = getSubId();
+        if (!SubscriptionManager.from(mContext).isActiveSubId(subId)) {
+            log("updateImsServiceConfigForSlot: subId not active: " + subId);
+            return;
+        }
+
         if (!mConfigUpdated || force) {
             try {
                 // Note: currently the order of updates is set to produce different order of
@@ -1533,7 +1540,8 @@ public class ImsManager {
         log("updateWfcFeatureAndProvisionedValues: available = " + available
                 + ", enabled = " + enabled
                 + ", mode = " + mode
-                + ", roaming = " + roaming);
+                + ", roaming = " + roaming
+                + ", isNetworkRoaming = " + isNetworkRoaming);
 
         if (isFeatureOn) {
             request.addCapabilitiesToEnableForTech(
@@ -2033,8 +2041,10 @@ public class ImsManager {
 
         call.setListener(listener);
         ImsCallSession session = createCallSession(profile);
+        boolean isConferenceUri = profile.getCallExtraBoolean(
+                TelephonyProperties.EXTRAS_IS_CONFERENCE_URI, false);
 
-        if ((callees != null) && (callees.length == 1)) {
+        if (!isConferenceUri && (callees != null) && (callees.length == 1)) {
             call.start(session, callees[0]);
         } else {
             call.start(session, callees);
@@ -2149,8 +2159,12 @@ public class ImsManager {
     public boolean updateRttConfigValue() {
         boolean isCarrierSupported =
                 getBooleanCarrierConfig(CarrierConfigManager.KEY_RTT_SUPPORTED_BOOL);
+        if (getBooleanCarrierConfig(CarrierConfigManager.KEY_RTT_ALWAYS_ENABLED_BOOL)) {
+            Settings.Secure.putInt(mContext.getContentResolver(),
+                    Settings.Secure.RTT_CALLING_MODE + convertRttPhoneId(mPhoneId), 1);
+        }
         boolean isRttUiSettingEnabled = Settings.Secure.getInt(mContext.getContentResolver(),
-                Settings.Secure.RTT_CALLING_MODE, 0) != 0;
+                Settings.Secure.RTT_CALLING_MODE + convertRttPhoneId(mPhoneId), 0) != 0;
         boolean isRttAlwaysOnCarrierConfig = getBooleanCarrierConfig(
                 CarrierConfigManager.KEY_IGNORE_RTT_MODE_SETTING_BOOL);
 
@@ -2178,6 +2192,10 @@ public class ImsManager {
                         + enabled + ": " + e);
             }
         });
+    }
+
+    private static String convertRttPhoneId(int phoneId) {
+        return phoneId != 0 ? Integer.toString(phoneId) : "";
     }
 
     public boolean queryMmTelCapability(
